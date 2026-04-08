@@ -278,7 +278,7 @@ def add_random_player_movement(room_state, room_structure, move_probability=0.5,
 Following code is adapted from the nicely written gym_sokoban repo
 """
 
-def generate_room(dim=(13, 13), p_change_directions=0.35, num_steps=25, num_boxes=3, tries=4, second_player=False, search_depth=100):
+def generate_room(dim=(13, 13), p_change_directions=0.35, num_steps=25, num_boxes=3, tries=4, second_player=False, search_depth=100, max_solution_length=None):
     """
     Generates a Sokoban room, represented by an integer matrix. The elements are encoded as follows:
     wall = 0
@@ -294,14 +294,19 @@ def generate_room(dim=(13, 13), p_change_directions=0.35, num_steps=25, num_boxe
     :param num_boxes:
     :param tries:
     :param second_player:
+    :param max_solution_length: If set, only accept puzzles solvable in <= this many actions.
     :return: Numpy 2d Array, box mapping, action sequence
     """
     room_state = np.zeros(shape=dim)
     room_structure = np.zeros(shape=dim)
 
+    # When filtering by solution length, we need more attempts
+    effective_tries = tries if max_solution_length is None else max(tries, 1000)
+
     # Some times rooms with a score == 0 are the only possibility.
     # In these case, we try another model.
-    for t in range(tries):
+    found = False
+    for t in range(effective_tries):
         room = room_topology_generation(dim, p_change_directions, num_steps)
         room = place_boxes_and_player(room, num_boxes=num_boxes, second_player=second_player)
 
@@ -317,23 +322,30 @@ def generate_room(dim=(13, 13), p_change_directions=0.35, num_steps=25, num_boxe
         room_state[room_state == 3] = 4
 
         if box_displacement_score(box_mapping) > 0:
+            if max_solution_length is not None:
+                shortest = get_shortest_action_path(room_structure, room_state, MAX_DEPTH=max_solution_length)
+                if len(shortest) == 0 or len(shortest) > max_solution_length or len(shortest) < max_solution_length:
+                    continue
+            found = True
             break
 
-    if box_displacement_score(box_mapping) == 0:
-        raise RuntimeWarning('Generated Model with score == 0')
+    if not found:
+        raise RuntimeWarning('No puzzle found matching constraints')
 
-    # Add random player movement after reverse_playing
-    if box_displacement_score(box_mapping) == 1:
-        move_probability = 0.8
-    else:
-        move_probability = 0.5
-    room_state = add_random_player_movement(
-        room_state, 
-        room_structure,
-        move_probability=move_probability,       # 50% chance the player will move
-        continue_probability=0.5,   # 50% chance to continue moving after each step
-        max_steps=3                 # Maximum of 3 steps
-    )
+    # Skip random player movement when filtering by solution length,
+    # as it moves the player away and inflates the required actions.
+    if max_solution_length is None:
+        if box_displacement_score(box_mapping) == 1:
+            move_probability = 0.8
+        else:
+            move_probability = 0.5
+        room_state = add_random_player_movement(
+            room_state,
+            room_structure,
+            move_probability=move_probability,       # 50% chance the player will move
+            continue_probability=0.5,   # 50% chance to continue moving after each step
+            max_steps=3                 # Maximum of 3 steps
+        )
 
     return room_structure, room_state, box_mapping, action_sequence
 

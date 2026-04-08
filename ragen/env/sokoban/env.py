@@ -1,6 +1,8 @@
 import gym
 from gym_sokoban.envs.sokoban_env import SokobanEnv as GymSokobanEnv
 import numpy as np
+import json
+import os
 from .utils import (
     generate_room,
     collect_entity_coordinates,
@@ -17,27 +19,51 @@ class SokobanEnv(BaseDiscreteActionEnv, GymSokobanEnv):
         self.GRID_LOOKUP = self.config.grid_lookup
         self.ACTION_LOOKUP = self.config.action_lookup
         self.search_depth = self.config.search_depth
+        self.max_solution_length = self.config.max_solution_length
         self.ACTION_SPACE = gym.spaces.discrete.Discrete(4, start=1)
         self.render_mode = self.config.render_mode
         self.observation_format = self.config.observation_format
 
+        self._datasets = {}  # lazy-loaded, keyed by mode ("train"/"val")
+
         BaseDiscreteActionEnv.__init__(self)
         GymSokobanEnv.__init__(
             self,
-            dim_room=self.config.dim_room, 
+            dim_room=self.config.dim_room,
             max_steps=self.config.max_steps,
             num_boxes=self.config.num_boxes,
             **kwargs
         )
 
+    def _get_dataset(self, mode):
+        """Lazy-load train.parquet or val.parquet from dataset_dir."""
+        if mode not in self._datasets:
+            import datasets as hf_datasets
+            path = os.path.join(self.config.dataset_dir, f"{mode}.parquet")
+            self._datasets[mode] = hf_datasets.load_dataset("parquet", data_files=path)['train']
+        return self._datasets[mode]
+
     def reset(self, seed=None, mode=None):
+        if self.config.dataset_dir is not None:
+            ds_mode = mode if mode in ("train", "val") else "train"
+            ds = self._get_dataset(ds_mode)
+            index = seed % len(ds) if seed is not None else 0
+            data = ds[index]
+            self.room_fixed = np.array(json.loads(data['room_fixed']))
+            self.room_state = np.array(json.loads(data['room_state']))
+            self.box_mapping = json.loads(data['box_mapping'])
+            self.num_env_steps, self.reward_last, self.boxes_on_target = 0, 0, 0
+            self.player_position = np.argwhere(self.room_state == 5)[0]
+            return self.render()
+
         try:
             with all_seed(seed):
                 self.room_fixed, self.room_state, self.box_mapping, action_sequence = generate_room(
                     dim=self.dim_room,
                     num_steps=self.num_gen_steps,
                     num_boxes=self.num_boxes,
-                    search_depth=self.search_depth
+                    search_depth=self.search_depth,
+                    max_solution_length=self.max_solution_length
                 )
             self.num_env_steps, self.reward_last, self.boxes_on_target = 0, 0, 0
             self.player_position = np.argwhere(self.room_state == 5)[0]

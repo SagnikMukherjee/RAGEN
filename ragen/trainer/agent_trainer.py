@@ -25,7 +25,7 @@ from verl.single_controller.ray.base import create_colocated_worker_cls
 from verl.trainer.config import AlgoConfig
 from verl.trainer.ppo import core_algos
 from verl.trainer.ppo.core_algos import AdvantageEstimator, agg_loss
-from ragen.trainer.core_algos import compute_grpo_outcome_advantage
+from ragen.trainer.core_algos import compute_grpo_outcome_advantage, compute_bi_level_gae_advantage_return
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_throughout_metrics,
@@ -137,7 +137,7 @@ def adjust_batch(batch: DataProto, size_divisor: int, mode: str = "copy") -> Dat
     return adjusted_batch
 
 
-def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, multi_turn=False, norm_adv_by_std_in_grpo=True, bi_level_gae=False, high_level_gamma=1.0, soft_advantage_reweight=False):
+def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, multi_turn=False, norm_adv_by_std_in_grpo=True, bi_level_gae=False, high_level_gamma=1.0, soft_advantage_reweight=False, turn_level_only=False):
     # Back-compatible with trainers that do not compute response mask in fit
     if "response_mask" not in data.batch:
         data.batch["response_mask"] = compute_response_mask(data)
@@ -145,13 +145,14 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
     # TODO: add other ways to estimate advantages
     if adv_estimator == AdvantageEstimator.GAE:
         if bi_level_gae:
-            advantages, returns = core_algos.compute_bi_level_gae_advantage_return(
+            advantages, returns = compute_bi_level_gae_advantage_return(
                 token_level_rewards=data.batch["token_level_rewards"],
                 values=data.batch["values"],
                 loss_mask=data.batch["response_mask"],
                 gamma=gamma,
                 lam=lam,
                 high_level_gamma=high_level_gamma,
+                turn_level_only=turn_level_only,
             )
         else:
             advantages, returns = core_algos.compute_gae_advantage_return(
@@ -803,6 +804,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
             high_level_gamma=self.config.algorithm.high_level_gamma,
             bi_level_gae=self.config.algorithm.bi_level_gae,
             soft_advantage_reweight=soft_advantage_reweight,
+            turn_level_only=getattr(self.config.algorithm, 'turn_level_only', False),
         )
 
         if soft_advantage_reweight and "group_std" in batch.batch:
@@ -1075,6 +1077,12 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     )
                     metrics.update(collapse_metrics)
 
+                # # Add before line 1080
+                # pre_filter_inputs, pre_filter_outputs, pre_filter_scores = _process_batch_for_logging(batch)
+                # for inp, out, sc in zip(pre_filter_inputs[:3], pre_filter_outputs[:3], pre_filter_scores[:3]):
+                #     print(f"=== Puzzle ===\n{inp}\n=== Response ===\n{out}\n=== Score: {sc} ===\n")
+
+
                 with marked_timer("filter", timing_raw):
                     # Filter first, then adjust batch size
                     batch, filter_metrics = self.rollout_filter.filter(batch)
@@ -1241,6 +1249,11 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                     break
 
                 inputs, outputs, scores = _process_batch_for_logging(batch)
+                # print("====input")
+                # print(inputs)
+                # for inp, out, sc in zip(inputs[:3], outputs[:3], scores[:3]):
+                #     print(f"=== Puzzle ===\n{inp}\n=== Response ===\n{out}\n=== Score: {sc} ===\n")
+
                 # self._maybe_log_generations(inputs=inputs, outputs=outputs, scores=scores, _type="train")
 
                 if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
@@ -1367,6 +1380,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                         high_level_gamma=self.config.algorithm.high_level_gamma,
                         bi_level_gae=self.config.algorithm.bi_level_gae,
                         soft_advantage_reweight=soft_advantage_reweight,
+                        turn_level_only=getattr(self.config.algorithm, 'turn_level_only', False),
                     )
 
                     # Apply soft advantage reweighting based on reward variance (group std)

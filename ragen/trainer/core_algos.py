@@ -125,15 +125,18 @@ def compute_bi_level_gae_advantage_return(
     """
     with torch.no_grad():
         token_level_rewards = token_level_rewards.float()
-        reward_mask = token_level_rewards.bool()
+        loss_mask = loss_mask.float()
         batch_size, gen_len = token_level_rewards.shape
         advantages = torch.zeros_like(token_level_rewards)
         returns = torch.zeros_like(token_level_rewards)
         updated_reward = token_level_rewards.clone()
-        
+
         for b in range(batch_size):
-            # First, calculate high level advantage and return for eos token of each turn using high level gamma
-            eos_positions=reward_mask[b].nonzero(as_tuple=True)[0]
+            # Find turn-end positions from loss_mask: where it transitions from 1→0 or is 1 at the end
+            mask_b = loss_mask[b]
+            padded = torch.cat([mask_b, torch.zeros(1, device=mask_b.device)])
+            eos_positions = ((padded[:-1] == 1) & (padded[1:] == 0)).nonzero(as_tuple=True)[0]
+            eos_set = set(eos_positions.tolist())
             lastgaelam = 0.0
             for i in range(len(eos_positions) - 1, -1, -1):
                 curr_pos = eos_positions[i]
@@ -184,9 +187,18 @@ def compute_bi_level_gae_advantage_return(
 
 # set up unittest
 if __name__ == "__main__":
-    token_level_rewards = torch.tensor([[0, 0, 0, 0, 1, 0, 0, 0, 0, 1]])
+    # Two assistant turns: tokens 0-4 (turn 1) and 6-9 (turn 2), with token 5 as env/user
+    token_level_rewards = torch.tensor([[0, 0, 0, 0, 1, 0, 0, 0, 0, 1]]).float()
     values = torch.tensor([[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]])
-    loss_mask = torch.ones(1, 10)
+    loss_mask = torch.tensor([[1, 1, 1, 1, 1, 0, 1, 1, 1, 1]]).float()
+    print("=== Test 1: nonzero rewards at turn ends ===")
     advantages, returns = compute_bi_level_gae_advantage_return(token_level_rewards, values, loss_mask, 1, 1, 0.95)
-    print(advantages)
-    print(returns)
+    print("advantages:", advantages)
+    print("returns:", returns)
+
+    # Same structure but turn 1 has reward=0 — should still detect both turn boundaries
+    token_level_rewards_zero = torch.tensor([[0, 0, 0, 0, 0, 0, 0, 0, 0, 1]]).float()
+    print("\n=== Test 2: zero reward at turn 1 end ===")
+    advantages2, returns2 = compute_bi_level_gae_advantage_return(token_level_rewards_zero, values, loss_mask, 1, 1, 0.95)
+    print("advantages:", advantages2)
+    print("returns:", returns2)

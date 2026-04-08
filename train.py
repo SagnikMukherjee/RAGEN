@@ -159,8 +159,8 @@ def add_dependency_and_validate_config(config):
         assert config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio >= config.ppo_mini_batch_size, \
             f"env_groups * group_size * effective_ratio ({config.es_manager.train.env_groups * config.es_manager.train.group_size * effective_ratio}) must be greater than or equal to ppo_mini_batch_size ({config.ppo_mini_batch_size})."
     assert config.algorithm.bi_level_gae == False or config.algorithm.adv_estimator == "gae", "BI_LEVEL_GAE is enabled, so config.algorithm.adv_estimator should be set to gae"
-    assert config.algorithm.bi_level_gae == False or (not config.agent_proxy.use_turn_scores), "BI_LEVEL_GAE is enabled, but currently use_turn_scores are not correctly supported, so config.agent_proxy.use_turn_scores should be set to False" # This will be added later. Currently turn-scores are not correctly supported yet.
-    # assert config.algorithm.bi_level_gae == False or config.agent_proxy.use_turn_scores, "BI_LEVEL_GAE is enabled, so config.agent_proxy.use_turn_scores should be set to True" # This will be added later. Currently turn-scores are not correctly supported yet.
+    # bi_level_gae works with both use_turn_scores=True (per-turn rewards) and False (end-of-episode reward)
+    # Turn boundaries are now detected from loss_mask, not from reward positions
 
     # add dependency
     config.data.train_batch_size = config.es_manager.train.env_groups * config.es_manager.train.group_size
