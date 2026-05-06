@@ -25,7 +25,7 @@ from ragen.llm_agent.memory.base import BaseMemory
 register_resolvers()
 
 def get_special_tokens(tokenizer: AutoTokenizer):
-    if "qwen" in tokenizer.name_or_path.lower():
+    if "qwen" in tokenizer.name_or_path.lower() or "openthinker2-7b"in tokenizer.name_or_path.lower():
         special_token = tokenizer.encode("<|im_start|>")[0]
         reward_token = tokenizer.encode("<|im_end|>")[0]
     elif "llama-3" in tokenizer.name_or_path.lower():
@@ -94,7 +94,13 @@ class ContextManager:
         self.tokenizer = tokenizer
         self.processor = processor
         self.action_sep = self.config.agent_proxy.action_sep
-        self.special_token_list = ["<think>", "</think>", "<answer>", "</answer>", "<|im_start|>", "<|im_end|>"]
+        self.special_token_list = [
+            "<think>", "</think>",
+            "<state>", "</state>",
+            "<value>", "</value>",
+            "<answer>", "</answer>",
+            "<|im_start|>", "<|im_end|>",
+        ]
 
         self.es_cfg = self.config.es_manager[mode]
         self.env_nums = {
@@ -193,30 +199,45 @@ class ContextManager:
         return memory_manager
 
     def _parse_response(self, response: str) -> List:
-        pattern = r'<think>(.*?)</think>\s*<answer>(.*?)</answer>' if self.config.agent_proxy.enable_think else r'<answer>(.*?)</answer>'
-        match = re.search(pattern, response, re.DOTALL)
-        if not match:
-            # think_content, action_content, actions = "", "", [] # do not remove this kind of invalid string
-            llm_response, actions = response, []
-        else:
-            if self.config.agent_proxy.enable_think:
-                think_content, action_content = match.group(1), match.group(2)
-            else:
-                think_content, action_content = "", match.group(1)
-
-                
+        def _clean_content(content: str) -> str:
             for special_token in self.special_token_list:
-                action_content = action_content.replace(special_token, "").strip()
-                think_content = think_content.replace(special_token, "").strip()
-            
+                content = content.replace(special_token, "").strip()
+            return content
+
+        def _extract_actions(action_content: str) -> Tuple[str, List[str]]:
+            action_content = _clean_content(action_content)
             actions = [action.strip() for action in action_content.split(self.action_sep) if action.strip()]
             max_actions = self.config.agent_proxy.max_actions_per_turn
 
             if len(actions) > max_actions:
                 actions = actions[:max_actions] #Only the first MAX_ACTIONS actions are kept in the rollout.
                 action_content = (" " + self.action_sep + " ").join(actions)
+            return action_content, actions
 
-            llm_response = f"<think>{think_content}</think><answer>{action_content}</answer>" if self.config.agent_proxy.enable_think else f"<answer>{action_content}</answer>"
+        answer_match = re.search(r'<answer>(.*?)</answer>', response, re.DOTALL)
+        if not answer_match:
+            # think_content, action_content, actions = "", "", [] # do not remove this kind of invalid string
+            llm_response, actions = response, []
+        else:
+            if self.config.agent_proxy.enable_think:
+                think_match = re.search(r'<think>(.*?)</think>', response, re.DOTALL)
+                think_content = _clean_content(think_match.group(1)) if think_match else ""
+                action_content, actions = _extract_actions(answer_match.group(1))
+
+                pieces = [f"<think>{think_content}</think>"]
+                if getattr(self.config.agent_proxy, "lookahead_format", False):
+                    state_match = re.search(r'<state>(.*?)</state>', response, re.DOTALL)
+                    value_match = re.search(r'<value>(.*?)</value>', response, re.DOTALL)
+                    if state_match:
+                        pieces.append(f"<state>{_clean_content(state_match.group(1))}</state>")
+                    if value_match:
+                        pieces.append(f"<value>{_clean_content(value_match.group(1))}</value>")
+                pieces.append(f"<answer>{action_content}</answer>")
+                llm_response = "".join(pieces)
+            else:
+                action_content, actions = _extract_actions(answer_match.group(1))
+                llm_response = f"<answer>{action_content}</answer>"
+
         return llm_response, actions
         
     def _normalize_score_tensor(self, score_tensor: torch.Tensor, env_outputs: List[Dict]) -> torch.Tensor:
@@ -529,11 +550,20 @@ class ContextManager:
 
     def _build_format_prompt(self, env_id: int) -> Tuple[str, str]:
         """Build FORMAT_PROMPT and LENGTH_PROMPT for an environment."""
-        FORMAT_PROMPT = (
-            "<think> [Your thoughts] </think> <answer> [your answer] </answer>"
-            if self.config.agent_proxy.enable_think
-            else "<answer> [your answer] </answer>"
-        )
+        if getattr(self.config.agent_proxy, "lookahead_format", False):
+            FORMAT_PROMPT = (
+                "<think> [brief reasoning] </think> "
+                "<state> [natural-language prediction of the state reached by the proposed action(s): "
+                "where the player and box(es) will be, and any important obstacle or dead-end] </state> "
+                "<value> [natural-language evaluation of how good that predicted state is for solving the puzzle: "
+                "whether it is legal/effective, closer to the target, solved, stuck, or worse; "
+                "do not answer with only generic labels like Positive or Negative] </value> "
+                f"<answer> [actions separated by {self.action_sep}] </answer>"
+            )
+        elif self.config.agent_proxy.enable_think:
+            FORMAT_PROMPT = "<think> [Your thoughts] </think> <answer> [your answer] </answer>"
+        else:
+            FORMAT_PROMPT = "<answer> [your answer] </answer>"
         LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_id]['max_tokens']} words (tokens)."
         return FORMAT_PROMPT, LENGTH_PROMPT
 
@@ -872,14 +902,7 @@ class ContextManager:
     ) -> str:
         """Build user content for single-turn format using memory manager."""
         env_id = env_output["env_id"]
-
-        # Get format prompts
-        FORMAT_PROMPT = (
-            "<think> [Your thoughts] </think> <answer> [your answer] </answer>"
-            if self.config.agent_proxy.enable_think
-            else "<answer> [your answer] </answer>"
-        )
-        LENGTH_PROMPT = f"Max response length: {self.env_config_lookup[env_id]['max_tokens']} words (tokens)."
+        FORMAT_PROMPT, LENGTH_PROMPT = self._build_format_prompt(env_id)
 
         # Use memory manager to build content
         memory_manager = self._get_memory_manager(env_id)

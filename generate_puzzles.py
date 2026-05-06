@@ -49,7 +49,7 @@ def _render_grid(room_state, room_structure):
 
 def _generate_single_puzzle(args_tuple):
     """Generate a single puzzle. Used by both serial and parallel modes."""
-    dim, num_boxes, max_solution_length, search_depth, num_steps = args_tuple
+    dim, num_boxes, max_solution_length, search_depth, num_steps, nonlinear, linear = args_tuple
     try:
         room_structure, room_state, box_mapping, _ = utils.generate_room(
             dim=dim,
@@ -61,6 +61,10 @@ def _generate_single_puzzle(args_tuple):
         shortest = utils.get_shortest_action_path(
             room_structure, room_state, MAX_DEPTH=max_solution_length + 10
         )
+        if nonlinear and len(set(shortest)) <= 1:
+            return None, None  # reject linear puzzles
+        if linear and len(set(shortest)) > 1:
+            return None, None  # reject nonlinear puzzles
         h = _puzzle_hash(room_state, room_structure)
         puzzle = {
             "room_fixed": json.dumps(room_structure.tolist()),
@@ -77,14 +81,14 @@ def _generate_single_puzzle(args_tuple):
 
 def generate_puzzles(dim, num_boxes, max_solution_length, num_puzzles,
                      search_depth=300, num_steps=100, exclude_hashes=None,
-                     workers=1, desc="Generating"):
+                     workers=1, desc="Generating", nonlinear=False, linear=False):
     """Generate puzzles with optional parallelism. Deduplicates against exclude_hashes."""
     if exclude_hashes is None:
         exclude_hashes = set()
 
     puzzles = []
     seen = set(exclude_hashes)
-    args_tuple = (dim, num_boxes, max_solution_length, search_depth, num_steps)
+    args_tuple = (dim, num_boxes, max_solution_length, search_depth, num_steps, nonlinear, linear)
 
     if workers > 1:
         # Parallel mode: submit batches of work
@@ -165,11 +169,11 @@ def generate_puzzles(dim, num_boxes, max_solution_length, num_puzzles,
 
 
 def display_puzzles(dim, num_boxes, max_solution_length, num_puzzles,
-                    search_depth=300, num_steps=100, workers=1):
+                    search_depth=300, num_steps=100, workers=1, nonlinear=False, linear=False):
     """Generate and print puzzles to console."""
     puzzles, _ = generate_puzzles(
         dim, num_boxes, max_solution_length, num_puzzles, search_depth, num_steps,
-        workers=workers, desc="Generating puzzles"
+        workers=workers, desc="Generating puzzles", nonlinear=nonlinear, linear=linear
     )
     for i, p in enumerate(puzzles):
         room_state = np.array(json.loads(p["room_state"]))
@@ -190,7 +194,7 @@ def display_puzzles(dim, num_boxes, max_solution_length, num_puzzles,
 
 
 def save_puzzles(dim, num_boxes, max_solution_length, train_count, val_count,
-                 save_dir, search_depth=300, num_steps=100, workers=1):
+                 save_dir, search_depth=300, num_steps=100, workers=1, nonlinear=False, linear=False):
     """Generate and save train/val parquet files with dedup."""
     import pandas as pd
 
@@ -199,13 +203,14 @@ def save_puzzles(dim, num_boxes, max_solution_length, train_count, val_count,
     # Generate val set first
     val_puzzles, val_hashes = generate_puzzles(
         dim, num_boxes, max_solution_length, val_count, search_depth, num_steps,
-        workers=workers, desc="Generating val puzzles"
+        workers=workers, desc="Generating val puzzles", nonlinear=nonlinear, linear=linear
     )
 
     # Generate train set, excluding val puzzles
     train_puzzles, _ = generate_puzzles(
         dim, num_boxes, max_solution_length, train_count, search_depth, num_steps,
-        exclude_hashes=val_hashes, workers=workers, desc="Generating train puzzles"
+        exclude_hashes=val_hashes, workers=workers, desc="Generating train puzzles",
+        nonlinear=nonlinear, linear=linear
     )
 
     # Save as parquet
@@ -257,7 +262,12 @@ if __name__ == "__main__":
     parser.add_argument("--train-count", type=int, default=5000, help="Number of train puzzles (save mode)")
     parser.add_argument("--val-count", type=int, default=1000, help="Number of val puzzles (save mode)")
     parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers (1 = serial)")
+    parser.add_argument("--nonlinear", action="store_true", help="Only generate puzzles with mixed directions (no straight-line pushes)")
+    parser.add_argument("--linear", action="store_true", help="Only generate linear puzzles (all pushes same direction)")
     args = parser.parse_args()
+
+    if args.nonlinear and args.linear:
+        parser.error("--nonlinear and --linear are mutually exclusive")
 
     dim = (args.dim, args.dim)
 
@@ -272,6 +282,8 @@ if __name__ == "__main__":
             search_depth=args.search_depth,
             num_steps=args.num_steps,
             workers=args.workers,
+            nonlinear=args.nonlinear,
+            linear=args.linear,
         )
     else:
         display_puzzles(
@@ -282,4 +294,6 @@ if __name__ == "__main__":
             search_depth=args.search_depth,
             num_steps=args.num_steps,
             workers=args.workers,
+            nonlinear=args.nonlinear,
+            linear=args.linear,
         )

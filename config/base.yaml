@@ -141,6 +141,7 @@ agent_proxy:
   max_actions_per_turn: 2 # how many actions can be output at most in a single turn
   use_turn_scores: False # important to GAE when applying token-level rewards to token-level advantages. If False, will take the sum of scores as the reward for the last turn.
   enable_think: True # False -> no think RL
+  lookahead_format: False # if True, FORMAT_PROMPT asks for <state> and <value> blocks before <answer>
   reward_normalization:
     grouping: "state" # state / batch / inductive
     method: "identity" # asym_clip / identity / mean_std

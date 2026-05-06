@@ -1182,6 +1182,12 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                         if self.config.trainer.get("exit_after_gradient_analysis", False):
                             metrics["trainer/exited_after_gradient_analysis"] = 1.0
 
+                    # Run validation even when filter drops everything
+                    if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0):
+                        with marked_timer("testing", timing_raw):
+                            val_metrics: dict = self._validate()
+                        metrics.update(val_metrics)
+
                     logger.log(data=metrics, step=self.global_steps)
 
                     if self.early_stopped or is_last_step:
@@ -1254,7 +1260,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                 # for inp, out, sc in zip(inputs[:3], outputs[:3], scores[:3]):
                 #     print(f"=== Puzzle ===\n{inp}\n=== Response ===\n{out}\n=== Score: {sc} ===\n")
 
-                # self._maybe_log_generations(inputs=inputs, outputs=outputs, scores=scores, _type="train")
+                self._maybe_log_generations(inputs=inputs, outputs=outputs, scores=scores, _type="train")
 
                 if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                     # TODO: check if this is correct. Not tested yer
@@ -1493,19 +1499,19 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                             last_val_metrics = val_metrics
                     metrics.update(val_metrics)
 
-                    # Success-based early stopping logic
-                    for key, value in val_metrics.items():
-                        if key.startswith("val-env/") and key.endswith("/success"):
-                            if value < 0.01:
-                                self.consecutive_low_success[key] += 1
-                            else:
-                                self.consecutive_low_success[key] = 0
-                            
-                            if self.consecutive_low_success[key] >= 5:
-                                print(f"\n[Early Stopping] Model failed to reach 1% success on {key} for 5 consecutive steps.")
-                                self.early_stopped = True
-                                self.early_stop_type = "low_validation_success"
-                                break
+                    # Success-based early stopping logic (disabled — triggers incorrectly with multi-tag val)
+                    # for key, value in val_metrics.items():
+                    #     if key.startswith("val-env/") and key.endswith("/success"):
+                    #         if value < 0.01:
+                    #             self.consecutive_low_success[key] += 1
+                    #         else:
+                    #             self.consecutive_low_success[key] = 0
+                    #
+                    #         if self.consecutive_low_success[key] >= 5:
+                    #             print(f"\n[Early Stopping] Model failed to reach 1% success on {key} for 5 consecutive steps.")
+                    #             self.early_stopped = True
+                    #             self.early_stop_type = "low_validation_success"
+                    #             break
                     
                     if self.early_stopped:
                         metrics.update({self._early_stop_metric_key(): 1.0})
