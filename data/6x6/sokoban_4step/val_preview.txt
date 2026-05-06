@@ -1,0 +1,50 @@
+=== Puzzle 1 === (Solution: 4 steps)
+Player: (2, 4), Boxes: [(2, 3)], Targets: [(3, 2)]
+######
+#____#
+#__XP#
+#_O###
+#__###
+######
+Solution: Left || Up || Left || Down
+
+=== Puzzle 2 === (Solution: 4 steps)
+Player: (1, 3), Boxes: [(2, 3)], Targets: [(3, 2)]
+######
+#__P_#
+#__X_#
+#_O__#
+#____#
+######
+Solution: Down || Right || Down || Left
+
+=== Puzzle 3 === (Solution: 4 steps)
+Player: (2, 4), Boxes: [(2, 3)], Targets: [(3, 2)]
+######
+#____#
+#__XP#
+#_O#_#
+#____#
+######
+Solution: Left || Up || Left || Down
+
+=== Puzzle 4 === (Solution: 4 steps)
+Player: (1, 3), Boxes: [(2, 3)], Targets: [(3, 2)]
+######
+#__P_#
+#__X_#
+#_O__#
+#___##
+######
+Solution: Down || Right || Down || Left
+
+=== Puzzle 5 === (Solution: 4 steps)
+Player: (2, 1), Boxes: [(2, 2)], Targets: [(3, 3)]
+######
+#____#
+#PX__#
+##_O_#
+#____#
+######
+Solution: Right || Up || Right || Down
+
