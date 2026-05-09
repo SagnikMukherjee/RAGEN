@@ -8,3 +8,6 @@
 [submodule "ragen/env/spatial/Base"]
 	path = ragen/env/spatial/Base
 	url = https://github.com/williamzhangNU/ToS_Base
+[submodule "verl"]
+	path = verl
+	url = https://github.com/volcengine/verl.git
