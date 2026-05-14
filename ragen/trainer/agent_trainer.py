@@ -381,7 +381,7 @@ class RayAgentTrainer(VerlRayPPOTrainer):
     def _maybe_log_generations(self, inputs, outputs, scores, _type="val"):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
-        generations_to_log = self.config.trainer.generations_to_log_to_wandb[_type]
+        generations_to_log = self.config.trainer.generations_to_log_to_wandb.get(_type, 0)
 
         if generations_to_log == 0:
             return
@@ -1223,7 +1223,14 @@ class RayAgentTrainer(VerlRayPPOTrainer):
 
                 # Record successful step variance for base variance calculation
                 # and run step-level reward-variance early stopping.
-                if "rollout/in_group_reward_std" in metrics and len(self.first_10_steps_variances) < 10:
+                reward_variance_early_stop = bool(
+                    self.config.trainer.get("reward_variance_early_stop", True)
+                )
+                if (
+                    reward_variance_early_stop
+                    and "rollout/in_group_reward_std" in metrics
+                    and len(self.first_10_steps_variances) < 10
+                ):
                     current_var = metrics["rollout/in_group_reward_std"]
                     if isinstance(current_var, torch.Tensor):
                         current_var = current_var.item()
@@ -1233,7 +1240,11 @@ class RayAgentTrainer(VerlRayPPOTrainer):
                         # Start counting collapse window only after baseline is ready.
                         self.consecutive_variances.clear()
                         print(f"\n[Early Stopping] Base variance calculated from first 10 steps: {self.base_variance:.6f}")
-                elif "rollout/in_group_reward_std" in metrics and self.base_variance is not None:
+                elif (
+                    reward_variance_early_stop
+                    and "rollout/in_group_reward_std" in metrics
+                    and self.base_variance is not None
+                ):
                     current_var = metrics["rollout/in_group_reward_std"]
                     if isinstance(current_var, torch.Tensor):
                         current_var = current_var.item()
